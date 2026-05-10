@@ -8,21 +8,21 @@ sys.path.append(os.path.dirname(__file__))
 import streamlit as st
 
 # Pages
-from pages.gaussian import gaussian_page
-from pages.laser_simulation import laser_page
-from pages.cavity_losses import cavity_page
-from pages.navier_stokes import navier_stokes_page
-from pages.data_science import data_science_page
-from pages.energy import energy_page
-from pages.numerisation_hub import numerisation_hub_page
+from modules.gaussian import gaussian_page
+from modules.laser_simulation import laser_page
+from modules.cavity_losses import cavity_page
+from modules.navier_stokes import navier_stokes_page
+from modules.data_science import data_science_page
+from modules.energy import energy_page
+from modules.numerisation_hub import numerisation_hub_page
 
 # Modules numériques
-from pages.integration import integration_page
-from pages.interpolation import interpolation_page
-from pages.equ_diff import equ_diff_page
-from pages.signal_analysis import signal_page
-from pages.optimisation import optimisation_page
-from pages.automatique import automatique_page
+from modules.integration import integration_page
+from modules.interpolation import interpolation_page
+from modules.equ_diff import equ_diff_page
+from modules.signal_analysis import signal_page
+from modules.optimisation import optimisation_page
+from modules.automatique import automatique_page
 
 st.set_page_config(
     page_title="Calcul Scientifique PRO",
