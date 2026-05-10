@@ -1,33 +1,37 @@
 import streamlit as st
 
 def numerisation_hub_page():
-    st.title("🔢 Hub Numérisation")
-    
+
+    st.title("🔢 Hub de Numérisation Scientifique")
+
+    st.markdown("""
+    ### Modules disponibles
+    Choisissez un domaine scientifique :
+    """)
+
     col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("⚙️ Optimisation", use_container_width=True):
-            st.session_state["page"] = "⚙️ Optimisation"
-            st.experimental_rerun()
 
-        if st.button("🤖 Automatique", use_container_width=True):
-            st.session_state["page"] = "🤖 Automatique"
-            st.experimental_rerun()
-    
-    with col2:
-        if st.button("📈 Intégration", use_container_width=True):
-            st.session_state["page"] = "Intégration"
-            st.experimental_rerun()
+    modules = [
+        ("⚙️ Optimisation", col1),
+        ("🤖 Automatique", col1),
+        ("📈 Intégration", col2),
+        ("🔄 Interpolation", col2),
+        ("📐 Éq. Diff", col3),
+        ("📡 Signal", col3),
+    ]
 
-        if st.button("🔄 Interpolation", use_container_width=True):
-            st.session_state["page"] = "Interpolation"
-            st.experimental_rerun()
-    
-    with col3:
-        if st.button("📐 Éq. Différentielles", use_container_width=True):
-            st.session_state["page"] = "Éq. Diff"
-            st.experimental_rerun()
+    for module_name, column in modules:
+        with column:
+            if st.button(module_name, use_container_width=True):
+                st.session_state["page"] = module_name
+                st.rerun()
 
-        if st.button("📡 Signal", use_container_width=True):
-            st.session_state["page"] = "Signal"
-            st.experimental_rerun()
+    st.markdown("---")
+
+    st.info("""
+    Ce hub centralise :
+    - les méthodes numériques,
+    - les calculs scientifiques,
+    - les outils d'analyse,
+    - les simulations physiques.
+    """)

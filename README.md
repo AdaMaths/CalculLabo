@@ -28,7 +28,7 @@ L'application s'ouvrira ensuite dans votre navigateur à `http://localhost:8510/
 > Si le port `8510` est occupé, utilisez un autre port, par exemple :
 >
 > ```bash
->streamlit run streamlit_app.py --server.port=8511 #8512, 8513, 850514......
+> #8512, 8513, 850514......
 > ```
 
 ## Fonctionnalités
@@ -87,7 +87,7 @@ Les packages utilisés dans ce projet sont :
 
 ```bash
 # Lancer l'application
-streamlit run streamlit_app.py
+python -m streamlit run streamlit_app.py
 
 # Lancer sur un port spécifique
 streamlit run streamlit_app.py --server.port=8502
@@ -101,4 +101,4 @@ streamlit run streamlit_app.py --logger.level=debug
 - L'application est modulaire et chaque page est indépendante
 - Les pages sont hébergées dans le dossier `pages/`
 - Si Streamlit indique qu'un port est occupé, changez le port avec `--server.port`
-- Vérifiez que l'environnement Python actif contient toutes les dépendances requises
+- Vérifiez que l'environnement Pythostreamlit run streamlit_app.py --server.port=8511n actif contient toutes les dépendances requises

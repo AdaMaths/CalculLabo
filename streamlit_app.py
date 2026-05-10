@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore")
+
 import sys
 import os
 sys.path.append(os.path.dirname(__file__))
@@ -17,7 +20,7 @@ from pages.numerisation_hub import numerisation_hub_page
 from pages.integration import integration_page
 from pages.interpolation import interpolation_page
 from pages.equ_diff import equ_diff_page
-from pages.signal import signal_page
+from pages.signal_analysis import signal_page
 from pages.optimisation import optimisation_page
 from pages.automatique import automatique_page
 
