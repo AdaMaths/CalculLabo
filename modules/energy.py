@@ -28,7 +28,14 @@ def _to_minutes(x):
         return np.nan
     if isinstance(x, (int, float)):
         return float(x)
-    if isinstance(x, datetime.time):
+    if isinstance(x, datetime.timedelta):
+        return x.total_seconds() / 60.0
+    if isinstance(x, np.timedelta64):
+        try:
+            return pd.to_timedelta(x).total_seconds() / 60.0
+        except Exception:
+            return np.nan
+    if isinstance(x, (datetime.time, datetime.datetime)):
         return x.hour * 60 + x.minute + x.second / 60
     if isinstance(x, str):
         parts = x.split(':')
@@ -66,21 +73,25 @@ def preprocess(df: pd.DataFrame) -> pd.DataFrame:
 
     - Supprime espaces sur noms de colonnes
     - Convertit colonnes numériques
+    - Convertit 'Date' en chaîne standard
     - Convertit 'Heure' en minutes si présente
-    - Créé `Energy_Gap` si `Ch 6` et `Ch 7` existent
+    - Crée `Energy_Gap` si `Ch 6` et `Ch 7` existent
     - Retourne DataFrame nettoyé
     """
     df = df.copy()
     df.columns = df.columns.str.strip()
 
+    if 'Date' in df.columns:
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        df['Date'] = df['Date'].dt.strftime('%Y-%m-%d')
+
+    if 'Heure' in df.columns:
+        df['Heure'] = df['Heure'].apply(_to_minutes)
+
     # Convertir colonnes numériques (sauf Date/Heure)
     for col in df.columns:
         if col.lower() not in ('heure', 'date'):
             df[col] = pd.to_numeric(df[col], errors='coerce')
-
-    # Convertir heure en minutes
-    if 'Heure' in df.columns:
-        df['Heure'] = df['Heure'].apply(_to_minutes)
 
     # Calculer Energy_Gap si possible
     if 'Ch 6' in df.columns and 'Ch 7' in df.columns:

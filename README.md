@@ -51,7 +51,7 @@ L'application s'ouvrira ensuite dans votre navigateur à `http://localhost:8510/
 
 project_TUTOR/
 ├── streamlit_app.py          # Application principale Streamlit
-├── pages/
+├── modules/
 │   ├── __init__.py
 │   ├── automatique.py
 │   ├── cavity_losses.py
