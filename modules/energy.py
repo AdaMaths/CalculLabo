@@ -1,571 +1,249 @@
-import streamlit as st
-import pandas as pd
+from typing import Dict, Tuple
+import pickle
+
+import joblib
+import matplotlib.pyplot as plt
 import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
-
+import pandas as pd
+import seaborn as sns
+import streamlit as st
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import r2_score
+from sklearn.tree import DecisionTreeRegressor
 
-# ==========================================================
-# PAGE ÉNERGIE
-# ==========================================================
+try:
+    from xgboost import XGBRegressor
+    _HAS_XGB = True
+except ImportError:
+    XGBRegressor = None
+    _HAS_XGB = False
+
+
+def _to_minutes(x):
+    """Convertit un horaire (hh:mm:ss ou nombre) en minutes (float)."""
+    import datetime
+    if pd.isna(x):
+        return np.nan
+    if isinstance(x, (int, float)):
+        return float(x)
+    if isinstance(x, datetime.time):
+        return x.hour * 60 + x.minute + x.second / 60
+    if isinstance(x, str):
+        parts = x.split(':')
+        try:
+            parts = [float(p) for p in parts]
+            if len(parts) == 3:
+                h, m, s = parts
+            elif len(parts) == 2:
+                h, m = parts
+                s = 0
+            else:
+                return float(x)
+            return h * 60 + m + s / 60
+        except Exception:
+            try:
+                return float(x)
+            except Exception:
+                return np.nan
+    return np.nan
+
+
+def load_dataframe(uploaded_file) -> pd.DataFrame:
+    """Charge un DataFrame depuis un fichier uploadé (Excel ou CSV)."""
+    if uploaded_file is None:
+        raise ValueError("Aucun fichier fourni")
+    name = getattr(uploaded_file, 'name', '')
+    if name.lower().endswith(('.xls', '.xlsx')):
+        return pd.read_excel(uploaded_file)
+    else:
+        return pd.read_csv(uploaded_file)
+
+
+def preprocess(df: pd.DataFrame) -> pd.DataFrame:
+    """Nettoie et prépare le DataFrame pour l'entraînement.
+
+    - Supprime espaces sur noms de colonnes
+    - Convertit colonnes numériques
+    - Convertit 'Heure' en minutes si présente
+    - Créé `Energy_Gap` si `Ch 6` et `Ch 7` existent
+    - Retourne DataFrame nettoyé
+    """
+    df = df.copy()
+    df.columns = df.columns.str.strip()
+
+    # Convertir colonnes numériques (sauf Date/Heure)
+    for col in df.columns:
+        if col.lower() not in ('heure', 'date'):
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    # Convertir heure en minutes
+    if 'Heure' in df.columns:
+        df['Heure'] = df['Heure'].apply(_to_minutes)
+
+    # Calculer Energy_Gap si possible
+    if 'Ch 6' in df.columns and 'Ch 7' in df.columns:
+        df['Energy_Gap'] = df['Ch 7'] - df['Ch 6']
+
+    # Drop lignes complètement vides
+    df = df.dropna(how='all')
+
+    return df
+
+
+def train_and_evaluate(df: pd.DataFrame, target: str = 'Energy_Gap') -> Tuple[pd.DataFrame, Dict]:
+    """Entraîne plusieurs modèles et renvoie les métriques et objets modèles.
+
+    Retourne (results_df, model_objects)
+    """
+    if target not in df.columns:
+        raise ValueError(f"La colonne cible '{target}' est introuvable dans le dataset")
+
+    features = [c for c in df.columns if c != target]
+    X = df[features].select_dtypes(include=[np.number]).dropna()
+    y = df.loc[X.index, target]
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    models = {
+        'Linear Regression': LinearRegression(),
+        'Decision Tree': DecisionTreeRegressor(random_state=42),
+        'Random Forest': RandomForestRegressor(n_estimators=100, random_state=42)
+    }
+    if _HAS_XGB:
+        models['XGBoost'] = XGBRegressor(n_estimators=100, learning_rate=0.1, random_state=42)
+
+    results = []
+    model_objects = {}
+    predictions = {}
+
+    for name, model in models.items():
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+        r2 = r2_score(y_test, y_pred)
+        rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+        mae = mean_absolute_error(y_test, y_pred)
+
+        results.append({'Modèle': name, 'R2': float(r2), 'RMSE': float(rmse), 'MAE': float(mae)})
+        model_objects[name] = model
+        predictions[name] = (y_test, y_pred)
+
+    results_df = pd.DataFrame(results).sort_values('R2', ascending=False).reset_index(drop=True)
+    return results_df, {'models': model_objects, 'predictions': predictions}
+
+
+def sample_dataset(n: int = 200) -> pd.DataFrame:
+    """Génère un jeu d'exemple synthétique avec colonnes Ch 1..Ch 7 et Heure."""
+    rng = np.random.default_rng(42)
+    heures = (rng.integers(0, 24, size=n) + rng.random(n)).round(3)
+    data = {
+        'Heure': [f"{int(h)}:{int((h-int(h))*60):02d}:00" for h in heures],
+        'Ch 1': rng.normal(100, 10, n),
+        'Ch 2': rng.normal(50, 8, n),
+        'Ch 3': rng.normal(30, 5, n),
+        'Ch 4': rng.normal(20, 4, n),
+        'Ch 5': rng.normal(10, 3, n),
+        'Ch 6': rng.normal(60, 7, n),
+        'Ch 7': rng.normal(65, 7, n),
+    }
+    df = pd.DataFrame(data)
+    df['Ch 7'] = df['Ch 6'] + rng.normal(5, 3, n)  # garantir un gap moyen
+    df['Energy_Gap'] = df['Ch 7'] - df['Ch 6']
+    return df
+
 
 def energy_page():
+    """Page Streamlit intégrée depuis `streamlit_app.py`."""
+    st.header("⚡ Module Énergie")
 
-    st.title("⚡ Analyse Énergétique")
+    st.markdown("Chargez un fichier Excel/CSV contenant les colonnes `Ch 1`..`Ch 7` et optionnellement `Heure`.")
+    use_sample = st.checkbox("Utiliser un jeu d'exemple")
 
-    st.markdown("""
-    ### Analyse de données énergétiques
-    Cette page permet :
-    - l'analyse des consommations,
-    - les statistiques énergétiques,
-    - la visualisation,
-    - les prédictions simples.
-    """)
+    if use_sample:
+        df = sample_dataset()
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.success("Jeu d'exemple chargé")
+        st.download_button("Télécharger le jeu d'exemple (CSV)", data=csv, file_name='energy_sample.csv', mime='text/csv')
+    else:
+        uploaded = st.file_uploader("Télécharger le fichier (Excel ou CSV)", type=['csv', 'xls', 'xlsx'])
 
-    # ======================================================
-    # UPLOAD
-    # ======================================================
-
-    uploaded_file = st.file_uploader(
-        "Importer fichier CSV ou Excel",
-        type=["csv", "xlsx"]
-    )
-
-    if uploaded_file is not None:
+        if uploaded is None:
+            st.info("Aucun fichier chargé — chargez vos données pour entraîner les modèles.")
+            return
 
         try:
-
-            # ==================================================
-            # LECTURE DONNÉES
-            # ==================================================
-
-            # IMPORTANT :
-            # PAS DE index_col=0
-
-            if uploaded_file.name.endswith(".csv"):
-
-                df = pd.read_csv(uploaded_file)
-
-            else:
-
-                df = pd.read_excel(uploaded_file)
-
-            # ==================================================
-            # SUPPRESSION AUTOMATIQUE
-            # COLONNES UNNAMED
-            # ==================================================
-
-            df = df.loc[
-                :,
-                ~df.columns.str.contains("^Unnamed")
-            ]
-
-            st.success("✅ Données chargées avec succès")
-
-            # ==================================================
-            # APERÇU
-            # ==================================================
-
-            st.subheader("📋 Aperçu des données")
-
-            st.dataframe(
-                df,
-                use_container_width=True
-            )
-
-            # ==================================================
-            # INFORMATIONS
-            # ==================================================
-
-            st.subheader("📌 Informations générales")
-
-            col1, col2, col3, col4 = st.columns(4)
-
-            with col1:
-
-                st.metric(
-                    "Lignes",
-                    df.shape[0]
-                )
-
-            with col2:
-
-                st.metric(
-                    "Colonnes",
-                    df.shape[1]
-                )
-
-            with col3:
-
-                st.metric(
-                    "Valeurs nulles",
-                    int(df.isnull().sum().sum())
-                )
-
-            with col4:
-
-                numeric_count = len(
-                    df.select_dtypes(
-                        include=np.number
-                    ).columns
-                )
-
-                st.metric(
-                    "Variables numériques",
-                    numeric_count
-                )
-
-            # ==================================================
-            # TYPES DES DONNÉES
-            # ==================================================
-
-            st.subheader("🧾 Types des colonnes")
-
-            dtype_df = pd.DataFrame({
-
-                "Colonne": df.columns,
-
-                "Type": df.dtypes.astype(str)
-
-            })
-
-            st.dataframe(
-                dtype_df,
-                use_container_width=True
-            )
-
-            # ==================================================
-            # VALEURS MANQUANTES
-            # ==================================================
-
-            st.subheader("⚠️ Valeurs manquantes")
-
-            missing_df = pd.DataFrame({
-
-                "Colonne": df.columns,
-
-                "Valeurs manquantes": df.isnull().sum()
-
-            })
-
-            st.dataframe(
-                missing_df,
-                use_container_width=True
-            )
-
-            # ==================================================
-            # STATISTIQUES
-            # ==================================================
-
-            st.subheader("📈 Statistiques descriptives")
-
-            st.dataframe(
-                df.describe(),
-                use_container_width=True
-            )
-
-            # ==================================================
-            # VARIABLES NUMÉRIQUES
-            # ==================================================
-
-            numeric_cols = list(
-                df.select_dtypes(
-                    include=np.number
-                ).columns
-            )
-
-            if len(numeric_cols) == 0:
-
-                st.warning(
-                    "❌ Aucune donnée numérique détectée"
-                )
-
-                return
-
-            # ==================================================
-            # VISUALISATIONS
-            # ==================================================
-
-            st.subheader("📊 Visualisations énergétiques")
-
-            graph_type = st.selectbox(
-                "Type de graphique",
-                [
-                    "Courbe",
-                    "Scatter",
-                    "Histogramme",
-                    "Boxplot"
-                ]
-            )
-
-            # ==================================================
-            # CHOIX VARIABLES
-            # ==================================================
-
-            colx, coly = st.columns(2)
-
-            with colx:
-
-                x_col = st.selectbox(
-                    "Variable X",
-                    numeric_cols,
-                    index=0
-                )
-
-            with coly:
-
-                y_col = st.selectbox(
-                    "Variable Y",
-                    numeric_cols,
-                    index=min(
-                        1,
-                        len(numeric_cols)-1
-                    )
-                )
-
-            # ==================================================
-            # COURBE
-            # ==================================================
-
-            if graph_type == "Courbe":
-
-                fig = px.line(
-                    df,
-                    x=x_col,
-                    y=y_col,
-                    markers=True,
-                    title=f"{x_col} vs {y_col}"
-                )
-
-            # ==================================================
-            # SCATTER
-            # ==================================================
-
-            elif graph_type == "Scatter":
-
-                fig = px.scatter(
-                    df,
-                    x=x_col,
-                    y=y_col,
-                    trendline="ols",
-                    title=f"{x_col} vs {y_col}",
-                    color=y_col
-                )
-
-            # ==================================================
-            # HISTOGRAMME
-            # ==================================================
-
-            elif graph_type == "Histogramme":
-
-                fig = px.histogram(
-                    df,
-                    x=x_col,
-                    nbins=30,
-                    title=f"Distribution de {x_col}",
-                    color_discrete_sequence=["orange"]
-                )
-
-            # ==================================================
-            # BOXPLOT
-            # ==================================================
-
-            else:
-
-                fig = px.box(
-                    df,
-                    y=y_col,
-                    title=f"Boxplot de {y_col}",
-                    color_discrete_sequence=["green"]
-                )
-
-            fig.update_layout(
-                template="plotly_white",
-                height=600
-            )
-
-            st.plotly_chart(
-                fig,
-                use_container_width=True
-            )
-
-            # ==================================================
-            # INDICATEURS ÉNERGÉTIQUES
-            # ==================================================
-
-            st.subheader("⚡ Indicateurs énergétiques")
-
-            mean_val = df[y_col].mean()
-
-            max_val = df[y_col].max()
-
-            min_val = df[y_col].min()
-
-            std_val = df[y_col].std()
-
-            c1, c2, c3, c4 = st.columns(4)
-
-            with c1:
-
-                st.metric(
-                    "Moyenne",
-                    f"{mean_val:.2f}"
-                )
-
-            with c2:
-
-                st.metric(
-                    "Maximum",
-                    f"{max_val:.2f}"
-                )
-
-            with c3:
-
-                st.metric(
-                    "Minimum",
-                    f"{min_val:.2f}"
-                )
-
-            with c4:
-
-                st.metric(
-                    "Écart-type",
-                    f"{std_val:.2f}"
-                )
-
-            # ==================================================
-            # MATRICE CORRÉLATION
-            # ==================================================
-
-            st.subheader("🔥 Corrélations")
-
-            corr = df[numeric_cols].corr()
-
-            fig_corr = px.imshow(
-                corr,
-                text_auto=True,
-                aspect="auto",
-                title="Matrice de corrélation"
-            )
-
-            fig_corr.update_layout(
-                height=700
-            )
-
-            st.plotly_chart(
-                fig_corr,
-                use_container_width=True
-            )
-
-            # ==================================================
-            # MODÈLE PRÉDICTIF
-            # ==================================================
-
-            st.subheader("🤖 Modèle prédictif")
-
-            target = st.selectbox(
-                "Variable cible",
-                numeric_cols
-            )
-
-            features = st.multiselect(
-                "Variables explicatives",
-                [
-                    c for c in numeric_cols
-                    if c != target
-                ],
-                default=[
-                    c for c in numeric_cols
-                    if c != target
-                ]
-            )
-
-            if len(features) > 0:
-
-                X = df[features]
-
-                y = df[target]
-
-                # ==============================================
-                # SPLIT
-                # ==============================================
-
-                X_train, X_test, y_train, y_test = train_test_split(
-                    X,
-                    y,
-                    test_size=0.2,
-                    random_state=42
-                )
-
-                # ==============================================
-                # MODEL
-                # ==============================================
-
-                model = LinearRegression()
-
-                model.fit(
-                    X_train,
-                    y_train
-                )
-
-                predictions = model.predict(
-                    X_test
-                )
-
-                r2 = r2_score(
-                    y_test,
-                    predictions
-                )
-
-                st.metric(
-                    "Score R²",
-                    f"{r2:.4f}"
-                )
-
-                # ==============================================
-                # COEFFICIENTS
-                # ==============================================
-
-                st.subheader("📌 Coefficients")
-
-                coef_df = pd.DataFrame({
-
-                    "Variable": features,
-
-                    "Coefficient": model.coef_
-
-                })
-
-                st.dataframe(
-                    coef_df,
-                    use_container_width=True
-                )
-
-                # ==============================================
-                # EQUATION
-                # ==============================================
-
-                equation = (
-                    f"y = {model.intercept_:.3f}"
-                )
-
-                for i, col in enumerate(features):
-
-                    equation += (
-                        f" + ({model.coef_[i]:.3f})×{col}"
-                    )
-
-                st.subheader(
-                    "🧮 Équation du modèle"
-                )
-
-                st.code(equation)
-
-                # ==============================================
-                # RÉEL VS PRÉDIT
-                # ==============================================
-
-                fig_pred = go.Figure()
-
-                fig_pred.add_trace(
-                    go.Scatter(
-                        x=y_test,
-                        y=predictions,
-                        mode='markers',
-                        name='Prédictions'
-                    )
-                )
-
-                fig_pred.add_trace(
-                    go.Scatter(
-                        x=[
-                            y_test.min(),
-                            y_test.max()
-                        ],
-                        y=[
-                            y_test.min(),
-                            y_test.max()
-                        ],
-                        mode='lines',
-                        name='Idéal'
-                    )
-                )
-
-                fig_pred.update_layout(
-                    title="Valeurs réelles vs prédites",
-                    xaxis_title="Réel",
-                    yaxis_title="Prédit",
-                    height=600,
-                    template="plotly_white"
-                )
-
-                st.plotly_chart(
-                    fig_pred,
-                    use_container_width=True
-                )
-
-                # ==============================================
-                # PREDICTION UTILISATEUR
-                # ==============================================
-
-                st.subheader("🔮 Faire une prédiction")
-
-                input_data = {}
-
-                cols = st.columns(2)
-
-                for i, feature in enumerate(features):
-
-                    with cols[i % 2]:
-
-                        input_data[feature] = st.number_input(
-                            feature,
-                            value=float(
-                                df[feature].mean()
-                            ),
-                            step=0.1
-                        )
-
-                if st.button("🚀 Prédire"):
-
-                    input_df = pd.DataFrame(
-                        [input_data]
-                    )
-
-                    prediction = model.predict(
-                        input_df
-                    )[0]
-
-                    st.success(
-                        f"✅ Valeur prédite : {prediction:.4f}"
-                    )
-
-            # ==================================================
-            # EXPORT
-            # ==================================================
-
-            st.subheader("💾 Export des données")
-
-            csv = df.to_csv(
-                index=False
-            ).encode("utf-8")
-
-            st.download_button(
-                "📥 Télécharger CSV",
-                csv,
-                "energy_export.csv",
-                "text/csv"
-            )
-
+            df = load_dataframe(uploaded)
         except Exception as e:
+            st.error(f"Impossible de lire le fichier : {e}")
+            return
 
-            st.error(f"❌ Erreur : {e}")
+    st.write("Aperçu des données brutes :")
+    st.dataframe(df.head())
 
+    df_clean = preprocess(df)
+    st.write("Aperçu après prétraitement :")
+    st.dataframe(df_clean.head())
+
+    numeric_cols = df_clean.select_dtypes(include=[np.number]).columns.tolist()
+    if len(numeric_cols) >= 2:
+        st.subheader("Matrice de corrélation")
+        corr = df_clean[numeric_cols].corr()
+        fig_corr, ax_corr = plt.subplots(figsize=(10, 8))
+        mask = np.triu(np.ones_like(corr, dtype=bool))
+        sns.heatmap(corr, mask=mask, annot=True, fmt='.2f', cmap='coolwarm', square=True, linewidths=0.5, cbar_kws={'shrink': 0.75}, ax=ax_corr)
+        ax_corr.set_title('Corrélation des variables numériques')
+        st.pyplot(fig_corr)
     else:
+        st.info("Pas assez de colonnes numériques pour afficher une matrice de corrélation.")
 
-        st.info("""
-        👆 Importez un fichier CSV ou Excel contenant des données énergétiques.
-        """)
+    if 'Energy_Gap' not in df_clean.columns:
+        if 'Ch 6' in df_clean.columns and 'Ch 7' in df_clean.columns:
+            df_clean['Energy_Gap'] = df_clean['Ch 7'] - df_clean['Ch 6']
+            st.success("'Energy_Gap' créée automatiquement à partir de 'Ch 6' et 'Ch 7'.")
+        else:
+            st.error("Colonnes 'Ch 6' et/ou 'Ch 7' manquantes. Impossible de calculer 'Energy_Gap'.")
+            return
+
+    try:
+        results_df, meta = train_and_evaluate(df_clean, target='Energy_Gap')
+    except Exception as e:
+        st.error(f"Erreur lors de l'entraînement : {e}")
+        return
+
+    st.subheader("Comparaison des modèles")
+    st.dataframe(results_df)
+
+    # Afficher graphiques de prédiction pour chaque modèle
+    for name, (y_test, y_pred) in meta['predictions'].items():
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.scatter(y_test, y_pred, alpha=0.6)
+        ax.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--')
+        rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+        ax.set_title(f"{name} — RMSE: {rmse:.2f}")
+        ax.set_xlabel('Réel')
+        ax.set_ylabel('Prédit')
+        st.pyplot(fig)
+
+    # Sauvegarder le meilleur modèle
+    best_name = results_df.loc[0, 'Modèle']
+    best_model = meta['models'][best_name]
+    # Sauvegarde sur disque
+    path = 'modules/meilleur_modele_energie.pkl'
+    joblib.dump(best_model, path)
+
+    # Préparer le téléchargement direct depuis l'UI
+    try:
+        pickle_bytes = pickle.dumps(best_model)
+        st.download_button("Télécharger le meilleur modèle", data=pickle_bytes,
+                           file_name='meilleur_modele_energie.pkl', mime='application/octet-stream')
+    except Exception:
+        st.warning("Téléchargement direct indisponible pour ce type de modèle.")
+
+    st.success(f"Meilleur modèle : {best_name} — sauvegardé sous {path}")
+
+
+
+
+
+
