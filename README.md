@@ -102,3 +102,15 @@ streamlit run streamlit_app.py --logger.level=debug
 - Les pages sont hébergées dans le dossier `pages/`
 - Si Streamlit indique qu'un port est occupé, changez le port avec `--server.port`
 - Vérifiez que l'environnement Pythostreamlit run streamlit_app.py --server.port=8511n actif contient toutes les dépendances requises
+
+## ⚡ Page Énergie — guide rapide
+
+- Ouvrez la page **⚡ Énergie** dans la barre latérale.
+- Vous pouvez **charger votre fichier Excel/CSV** contenant les colonnes `Ch 1`..`Ch 7` (optionnellement `Heure`).
+- Ou cochez **"Utiliser un jeu d'exemple"** pour charger un dataset synthétique et lancer l'entraînement.
+- Après l'entraînement, vous pouvez **télécharger le meilleur modèle** au format pickle depuis l'interface.
+
+Fichier d'exemple disponible : `assets/energy_sample.csv`.
+
+
+

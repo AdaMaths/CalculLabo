@@ -5,3 +5,4 @@ venv/
 .streamlit/
 .idea/
 .vscode/
+modules/*.pkl
